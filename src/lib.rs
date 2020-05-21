@@ -45,7 +45,7 @@
 //!
 //! [`tracing_error::SpanTrace`]: https://docs.rs/tracing-error/*/tracing_error/struct.SpanTrace.html
 //! [`color-backtrace`]: https://github.com/athre0z/color-backtrace
-#![doc(html_root_url = "https://docs.rs/color-spantrace/0.1.1")]
+#![doc(html_root_url = "https://docs.rs/color-spantrace/0.1.2")]
 #![warn(
     missing_debug_implementations,
     missing_docs,
@@ -227,7 +227,7 @@ impl fmt::Display for ColorSpanTrace<'_> {
         let mut err = Ok(());
         let mut span = 0;
 
-        writeln!(f, "{:━^80}\n", " SPANTRACE ")?;
+        writeln!(f, "{:━^80}\n", " SPAN TRACE ")?;
         self.span_trace.with_spans(|metadata, fields| {
             let frame = Frame { metadata, fields };
 
