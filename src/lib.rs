@@ -76,7 +76,10 @@ use ansi_term::{
 use std::env;
 use std::fmt;
 use std::fs::File;
-use std::io::{BufRead, BufReader, ErrorKind};
+use std::{
+    io::{BufRead, BufReader, ErrorKind},
+    path::Path,
+};
 use tracing_error::SpanTrace;
 
 /// Display a [`SpanTrace`] with colors and source
@@ -133,7 +136,11 @@ enum Verbosity {
 impl Verbosity {
     fn lib_from_env() -> Self {
         Self::convert_env(
-            env::var("RUST_LIB_BACKTRACE")
+            env::var("SPANTRACE")
+                .or_else(|_| env::var("LIB_SPANTRACE"))
+                .or_else(|_| env::var("RUST_SPANTRACE"))
+                .or_else(|_| env::var("RUST_LIB_SPANTRACE"))
+                .or_else(|_| env::var("RUST_LIB_BACKTRACE"))
                 .or_else(|_| env::var("RUST_BACKTRACE"))
                 .ok(),
         )
@@ -195,6 +202,8 @@ impl Frame<'_> {
     }
 
     fn print_source_if_avail(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        const ROOT: Option<&'static str> = option_env!("PWD");
+
         let (lineno, filename) = match (self.metadata.line(), self.metadata.file()) {
             (Some(a), Some(b)) => (a, b),
             // Without a line number and file name, we can't sensibly proceed.
@@ -203,7 +212,19 @@ impl Frame<'_> {
 
         let file = match File::open(filename) {
             Ok(file) => file,
-            Err(ref e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(ref e) if e.kind() == ErrorKind::NotFound => {
+                if let Some(root) = ROOT {
+                    let root = Path::new(root);
+                    let file = root.join(filename);
+                    match File::open(file) {
+                        Ok(file) => file,
+                        Err(ref e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+                        e @ Err(_) => e.unwrap(),
+                    }
+                } else {
+                    return Ok(());
+                }
+            }
             e @ Err(_) => e.unwrap(),
         };
 
