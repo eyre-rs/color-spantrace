@@ -69,15 +69,96 @@
     unused_parens,
     while_true
 )]
-use ansi_term::{
-    Color::{Cyan, Purple, Red},
-    Style,
-};
 use std::env;
 use std::fmt;
 use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind};
 use tracing_error::SpanTrace;
+use once_cell::sync::OnceCell;
+use owo_colors::{style, Style, XtermColors};
+
+static STYLES: OnceCell<Styles> = OnceCell::new();
+
+// XXX now that we support text effects, "color scheme" doesn't seem accurate anymore. Let me know if you'd prefer a different name. The good thing about `Styles` is, that it's pretty short.
+
+/// A struct that represents styles that should be used by `color_spantrace`
+#[derive(Debug, Copy, Clone, Default)]
+pub struct Styles {
+    file: Style,
+    line_number: Style,
+    target: Style,
+    fields: Style,
+    active_line: Style,
+}
+
+impl Styles {
+    /// Create blank styles
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Styles for a dark background. This is the default
+    pub fn dark() -> Self {
+        Self {
+            file:         style().purple(),
+            line_number:  style().purple(),
+            active_line:  style().white().bold(),
+
+            // XXX your trait from this file (which I have removed now) produced "xterm" colors. `owo_colors` documents the `xterm` module as follows: "XTerm 256-bit colors. Not as widely supported as standard ANSI but contains 240 more colors." (see *). Maybe it would be best to switch to something else now. In this case, the colors also have to be changed in `owo_colors`
+            // * https://github.com/jam1garner/owo-colors/blob/c0db9127cbc355dec36fbfa45b9adc534b72c4ad/src/colors.rs#L173
+            target:       style().color(XtermColors::UserBrightRed),
+            fields:       style().color(XtermColors::UserBrightCyan),
+        }
+    }
+
+    // XXX same as with `light` in `color_eyre`
+    /// Styles for a light background
+    pub fn light() -> Self {
+        Self {
+            file:         style().purple(),
+            line_number:  style().purple(),
+            target:       style().red(),
+            fields:       style().blue(),
+            active_line:  style().bold(),
+        }
+    }
+
+    /// Styles printed paths
+    pub fn file(mut self, style: Style) -> Self {
+        self.file = style;
+        self
+    }
+
+    /// Styles the line number of a file
+    pub fn line_number(mut self, style: Style) -> Self {
+        self.line_number = style;
+        self
+    }
+
+    /// Styles the target (i.e. the module and function name, and so on)
+    pub fn target(mut self, style: Style) -> Self {
+        self.target = style;
+        self
+    }
+
+    // XXX is this correct?
+    /// Styles fields of the `tracing` crate (in the context of `color_spantrace`, the arguments of functions and methods)
+    pub fn fields(mut self, style: Style) -> Self {
+        self.fields = style;
+        self
+    }
+
+    /// Styles the selected line of displayed code
+    pub fn active_line(mut self, style: Style) -> Self {
+        self.active_line = style;
+        self
+    }
+}
+
+/// Sets the global styles. This can only be set once and otherwise fails (`Err` contains the `Styles` that was passed to `set_styles`). Note: `colorize` sets the global styles implicitly, if they were not set already. So calling `colorize` and then `set_styles` fails
+pub fn set_styles(styles: Styles) -> Result<(), Styles> {
+    STYLES.set(styles)
+}
 
 /// Display a [`SpanTrace`] with colors and source
 ///
@@ -93,13 +174,17 @@ use tracing_error::SpanTrace;
 /// println!("{}", color_spantrace::colorize(&span_trace));
 /// ```
 ///
+/// Note: `colorize` sets the global styles implicitly, if they were not set already.
+///
 /// [`SpanTrace`]: https://docs.rs/tracing-error/*/tracing_error/struct.SpanTrace.html
 pub fn colorize(span_trace: &SpanTrace) -> impl fmt::Display + '_ {
-    ColorSpanTrace { span_trace }
+    let styles = *STYLES.get_or_init(Styles::dark);
+    ColorSpanTrace { span_trace, styles }
 }
 
 struct ColorSpanTrace<'a> {
     span_trace: &'a SpanTrace,
+    styles: Styles,
 }
 
 macro_rules! try_bool {
@@ -117,6 +202,7 @@ macro_rules! try_bool {
 struct Frame<'a> {
     metadata: &'a tracing_core::Metadata<'static>,
     fields: &'a str,
+    styles: Styles,
 }
 
 /// Defines how verbose the backtrace is supposed to be.
@@ -161,15 +247,19 @@ impl Frame<'_> {
             f,
             "{:>2}: {}{}{}",
             i,
-            Red.make_intense().paint(self.metadata.target()),
-            Red.make_intense().paint("::"),
-            Red.make_intense().paint(self.metadata.name()),
+            self.styles.target.style(self.metadata.target()),
+            self.styles.target.style("::"),
+            self.styles.target.style(self.metadata.name()),
         )
     }
 
     fn print_fields(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if !self.fields.is_empty() {
-            write!(f, " with {}", Cyan.make_intense().paint(self.fields))?;
+            write!(f, " with {}", self.styles.fields.style(self.fields))?;
+            // XXX via `OwoColorize` there is also the following:
+            // write!(f, " with {}", self.fields.style(self.styles.fields));
+            // I think the version above is a bit easier to read, but let me
+            // know if you prefer the alternative.
         }
 
         Ok(())
@@ -184,8 +274,8 @@ impl Frame<'_> {
             write!(
                 f,
                 "\n    at {}:{}",
-                Purple.paint(file),
-                Purple.paint(lineno)
+                self.styles.file.style(file),
+                self.styles.line_number.style(lineno),
             )?;
         } else {
             write!(f, "\n    at <unknown source file>")?;
@@ -213,7 +303,6 @@ impl Frame<'_> {
         let reader = BufReader::new(file);
         let start_line = lineno - 2.min(lineno - 1);
         let surrounding_src = reader.lines().skip(start_line as usize - 1).take(5);
-        let bold = Style::new().bold();
         let mut buf = String::new();
         for (line, cur_line_no) in surrounding_src.zip(start_line..) {
             if cur_line_no == lineno {
@@ -223,7 +312,7 @@ impl Frame<'_> {
                     cur_line_no.to_string(),
                     line.unwrap()
                 )?;
-                write!(f, "\n{}", bold.paint(&buf))?;
+                write!(f, "\n{}", self.styles.active_line.style(&buf))?;
                 buf.clear();
             } else {
                 write!(f, "\n{:>8} │ {}", cur_line_no, line.unwrap())?;
@@ -241,7 +330,7 @@ impl fmt::Display for ColorSpanTrace<'_> {
 
         writeln!(f, "{:━^80}\n", " SPANTRACE ")?;
         self.span_trace.with_spans(|metadata, fields| {
-            let frame = Frame { metadata, fields };
+            let frame = Frame { metadata, fields, styles: self.styles };
 
             if span > 0 {
                 try_bool!(write!(f, "\n",), err);
@@ -258,37 +347,5 @@ impl fmt::Display for ColorSpanTrace<'_> {
         });
 
         err
-    }
-}
-
-// TODO: remove when / if ansi_term merges these changes upstream
-trait ColorExt {
-    fn make_intense(self) -> Self;
-}
-
-impl ColorExt for ansi_term::Color {
-    fn make_intense(self) -> Self {
-        use ansi_term::Color::*;
-
-        match self {
-            Black => Fixed(8),
-            Red => Fixed(9),
-            Green => Fixed(10),
-            Yellow => Fixed(11),
-            Blue => Fixed(12),
-            Purple => Fixed(13),
-            Cyan => Fixed(14),
-            White => Fixed(15),
-            Fixed(color) if color < 8 => Fixed(color + 8),
-            other => other,
-        }
-    }
-}
-impl ColorExt for ansi_term::Style {
-    fn make_intense(mut self) -> Self {
-        if let Some(color) = self.foreground {
-            self.foreground = Some(color.make_intense());
-        }
-        self
     }
 }
