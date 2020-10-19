@@ -75,15 +75,13 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind};
 use tracing_error::SpanTrace;
 use once_cell::sync::OnceCell;
-use owo_colors::{style, Style, XtermColors};
+use owo_colors::{style, Style};
 
-static STYLES: OnceCell<Styles> = OnceCell::new();
+static THEME: OnceCell<Theme> = OnceCell::new();
 
-// XXX now that we support text effects, "color scheme" doesn't seem accurate anymore. Let me know if you'd prefer a different name. The good thing about `Styles` is, that it's pretty short.
-
-/// A struct that represents styles that should be used by `color_spantrace`
+/// A struct that represents theme that is used by `color_spantrace`
 #[derive(Debug, Copy, Clone, Default)]
-pub struct Styles {
+pub struct Theme{
     file: Style,
     line_number: Style,
     target: Style,
@@ -91,28 +89,25 @@ pub struct Styles {
     active_line: Style,
 }
 
-impl Styles {
-    /// Create blank styles
+impl Theme {
+    /// Create blank theme
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Styles for a dark background. This is the default
+    /// A theme for a dark background. This is the default
     pub fn dark() -> Self {
         Self {
             file:         style().purple(),
             line_number:  style().purple(),
             active_line:  style().white().bold(),
-
-            // XXX your trait from this file (which I have removed now) produced "xterm" colors. `owo_colors` documents the `xterm` module as follows: "XTerm 256-bit colors. Not as widely supported as standard ANSI but contains 240 more colors." (see *). Maybe it would be best to switch to something else now. In this case, the colors also have to be changed in `owo_colors`
-            // * https://github.com/jam1garner/owo-colors/blob/c0db9127cbc355dec36fbfa45b9adc534b72c4ad/src/colors.rs#L173
-            target:       style().color(XtermColors::UserBrightRed),
-            fields:       style().color(XtermColors::UserBrightCyan),
+            target:       style().bright_red(),
+            fields:       style().bright_cyan(),
         }
     }
 
     // XXX same as with `light` in `color_eyre`
-    /// Styles for a light background
+    /// A theme for a light background
     pub fn light() -> Self {
         Self {
             file:         style().purple(),
@@ -141,8 +136,7 @@ impl Styles {
         self
     }
 
-    // XXX is this correct?
-    /// Styles fields of the `tracing` crate (in the context of `color_spantrace`, the arguments of functions and methods)
+    /// Styles fields associated with a the `tracing::Span`.
     pub fn fields(mut self, style: Style) -> Self {
         self.fields = style;
         self
@@ -155,9 +149,27 @@ impl Styles {
     }
 }
 
-/// Sets the global styles. This can only be set once and otherwise fails (`Err` contains the `Styles` that was passed to `set_styles`). Note: `colorize` sets the global styles implicitly, if they were not set already. So calling `colorize` and then `set_styles` fails
-pub fn set_styles(styles: Styles) -> Result<(), Styles> {
-    STYLES.set(styles)
+/// An error returned by `set_theme` if a global theme was already set
+#[derive(Debug)]
+pub struct InstallThemeError;
+
+impl fmt::Display for InstallThemeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("could not set the provided `Theme` globally as another was already set")
+    }
+}
+
+impl std::error::Error for InstallThemeError {}
+
+/// Sets the global theme.
+///
+/// # Details
+///
+/// This can only be set once and otherwise fails.
+///
+/// **Note:** `colorize` sets the global theme implicitly, if it was not set already. So calling `colorize` and then `set_theme` fails
+pub fn set_theme(theme: Theme) -> Result<(), InstallThemeError> {
+    THEME.set(theme).map_err(|_| InstallThemeError)
 }
 
 /// Display a [`SpanTrace`] with colors and source
@@ -174,17 +186,17 @@ pub fn set_styles(styles: Styles) -> Result<(), Styles> {
 /// println!("{}", color_spantrace::colorize(&span_trace));
 /// ```
 ///
-/// Note: `colorize` sets the global styles implicitly, if they were not set already.
+/// **Note:** `colorize` sets the global theme implicitly, if it was not set already. So calling `colorize` and then `set_theme` fails
 ///
 /// [`SpanTrace`]: https://docs.rs/tracing-error/*/tracing_error/struct.SpanTrace.html
 pub fn colorize(span_trace: &SpanTrace) -> impl fmt::Display + '_ {
-    let styles = *STYLES.get_or_init(Styles::dark);
-    ColorSpanTrace { span_trace, styles }
+    let theme = *THEME.get_or_init(Theme::dark);
+    ColorSpanTrace { span_trace, theme }
 }
 
 struct ColorSpanTrace<'a> {
     span_trace: &'a SpanTrace,
-    styles: Styles,
+    theme: Theme,
 }
 
 macro_rules! try_bool {
@@ -202,7 +214,7 @@ macro_rules! try_bool {
 struct Frame<'a> {
     metadata: &'a tracing_core::Metadata<'static>,
     fields: &'a str,
-    styles: Styles,
+    theme: Theme,
 }
 
 /// Defines how verbose the backtrace is supposed to be.
@@ -247,19 +259,15 @@ impl Frame<'_> {
             f,
             "{:>2}: {}{}{}",
             i,
-            self.styles.target.style(self.metadata.target()),
-            self.styles.target.style("::"),
-            self.styles.target.style(self.metadata.name()),
+            self.theme.target.style(self.metadata.target()),
+            self.theme.target.style("::"),
+            self.theme.target.style(self.metadata.name()),
         )
     }
 
     fn print_fields(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if !self.fields.is_empty() {
-            write!(f, " with {}", self.styles.fields.style(self.fields))?;
-            // XXX via `OwoColorize` there is also the following:
-            // write!(f, " with {}", self.fields.style(self.styles.fields));
-            // I think the version above is a bit easier to read, but let me
-            // know if you prefer the alternative.
+            write!(f, " with {}", self.theme.fields.style(self.fields))?;
         }
 
         Ok(())
@@ -274,8 +282,8 @@ impl Frame<'_> {
             write!(
                 f,
                 "\n    at {}:{}",
-                self.styles.file.style(file),
-                self.styles.line_number.style(lineno),
+                self.theme.file.style(file),
+                self.theme.line_number.style(lineno),
             )?;
         } else {
             write!(f, "\n    at <unknown source file>")?;
@@ -312,7 +320,7 @@ impl Frame<'_> {
                     cur_line_no.to_string(),
                     line.unwrap()
                 )?;
-                write!(f, "\n{}", self.styles.active_line.style(&buf))?;
+                write!(f, "\n{}", self.theme.active_line.style(&buf))?;
                 buf.clear();
             } else {
                 write!(f, "\n{:>8} │ {}", cur_line_no, line.unwrap())?;
@@ -330,7 +338,7 @@ impl fmt::Display for ColorSpanTrace<'_> {
 
         writeln!(f, "{:━^80}\n", " SPANTRACE ")?;
         self.span_trace.with_spans(|metadata, fields| {
-            let frame = Frame { metadata, fields, styles: self.styles };
+            let frame = Frame { metadata, fields, theme: self.theme };
 
             if span > 0 {
                 try_bool!(write!(f, "\n",), err);
