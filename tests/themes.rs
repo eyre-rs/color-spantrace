@@ -57,7 +57,7 @@ fn test_backwards_compatibility(){
     let spantrace = test_capture(42);
     let colored_spantrace = format!("{}", color_spantrace::colorize(&spantrace));
 
-    let control_file_name = "style_control.txt";
+    let control_file_name = "theme_control.txt";
     let control_file_path = ["tests/data/", control_file_name].concat();
 
     // If `control_file_path` is missing, save corresponding file to current working directory, and panic with the request to move these files to `control_file_path`, and to commit them to Git. Being explicit (instead of saving directly to `control_file_path` to make sure `control_file_path` is committed to Git. These files anyway should never be missing.
