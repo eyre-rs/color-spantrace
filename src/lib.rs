@@ -69,19 +69,19 @@
     unused_parens,
     while_true
 )]
+use once_cell::sync::OnceCell;
+use owo_colors::{style, Style};
 use std::env;
 use std::fmt;
 use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind};
 use tracing_error::SpanTrace;
-use once_cell::sync::OnceCell;
-use owo_colors::{style, Style};
 
 static THEME: OnceCell<Theme> = OnceCell::new();
 
 /// A struct that represents theme that is used by `color_spantrace`
 #[derive(Debug, Copy, Clone, Default)]
-pub struct Theme{
+pub struct Theme {
     file: Style,
     line_number: Style,
     target: Style,
@@ -98,11 +98,11 @@ impl Theme {
     /// A theme for a dark background. This is the default
     pub fn dark() -> Self {
         Self {
-            file:         style().purple(),
-            line_number:  style().purple(),
-            active_line:  style().white().bold(),
-            target:       style().bright_red(),
-            fields:       style().bright_cyan(),
+            file: style().purple(),
+            line_number: style().purple(),
+            active_line: style().white().bold(),
+            target: style().bright_red(),
+            fields: style().bright_cyan(),
         }
     }
 
@@ -110,11 +110,11 @@ impl Theme {
     /// A theme for a light background
     pub fn light() -> Self {
         Self {
-            file:         style().purple(),
-            line_number:  style().purple(),
-            target:       style().red(),
-            fields:       style().blue(),
-            active_line:  style().bold(),
+            file: style().purple(),
+            line_number: style().purple(),
+            target: style().red(),
+            fields: style().blue(),
+            active_line: style().bold(),
         }
     }
 
@@ -338,7 +338,11 @@ impl fmt::Display for ColorSpanTrace<'_> {
 
         writeln!(f, "{:━^80}\n", " SPANTRACE ")?;
         self.span_trace.with_spans(|metadata, fields| {
-            let frame = Frame { metadata, fields, theme: self.theme };
+            let frame = Frame {
+                metadata,
+                fields,
+                theme: self.theme,
+            };
 
             if span > 0 {
                 try_bool!(write!(f, "\n",), err);
